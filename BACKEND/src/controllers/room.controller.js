@@ -166,3 +166,49 @@ export const getRoomById = wrapAsync(async (req, res) => {
     }
   })
 })
+
+export const getMessages = wrapAsync(async(req, res)=>{
+  const { roomId } = req.params
+  const { cursor, limit = 50} = req.query
+  const userId = req.userId
+
+  //check membership
+  const membership = await prisma.roomMember.findUnique({
+    where: { roomId_userId: {roomId, userId}}
+  })
+
+  if(!membership){
+    throw new NotFoundError('Room not found or you re not a member')
+  }
+
+  const take = Math.min(parseInt(limit), 100) // max 100 messages at a time
+
+  const messages = await prisma.message.findMany({
+    where:{
+      roomId,
+      ...(cursor && {
+        createdAt: { lt: new Date(cursor)}
+      })
+    },
+    take,
+    orderBy: {createdAt: 'desc'},
+    include:{
+      sender:{
+        select: {id: true, username: true, avatarColor: true}
+      }
+    }
+  })
+
+  const ordered = messages.reverse()
+
+  const nextCursor = messages.length === take
+    ? messages[messages.length - 1].createdAt.toISOString()
+    : null
+  
+  res.json({
+    success: true,
+    messages: ordered,
+    nextCursor,
+    hasMore: messages.length === take,
+  })
+})
