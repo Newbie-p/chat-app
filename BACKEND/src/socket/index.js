@@ -22,10 +22,31 @@ export const initSocket = (io) => {
     }
   });
 
+  // Helper — builds member list with online status and broadcasts to everyone in the room
+  const broadcastMembers = async (io, roomId) => {
+    const members = await prisma.roomMember.findMany({
+      where: { roomId },
+      include: {
+        user: { select: { id: true, username: true, avatarColor: true } },
+      },
+    });
+
+    const membersWithStatus = await Promise.all(
+      members.map(async (m) => {
+        const status = await redis.get(`chat:presence:${m.user.id}`);
+        return {
+          ...m.user,
+          online: status === "online",
+        };
+      })
+    );
+
+    io.to(roomId).emit("room:members", membersWithStatus);
+  };
+
   io.on("connection", (socket) => {
     console.log(`User connected: ${socket.username} (${socket.id})`);
 
-    // Set user online in Redis — non-blocking
     redis.set(`chat:presence:${socket.userId}`, "online").catch((err) => {
       console.error("Redis presence set failed:", err.message);
     });
@@ -44,32 +65,20 @@ export const initSocket = (io) => {
           return;
         }
 
+        // Leave previous room if switching
+        if (socket.currentRoom && socket.currentRoom !== roomId) {
+          socket.leave(socket.currentRoom);
+          socket.to(socket.currentRoom).emit("typing:stop", {
+            userId: socket.userId,
+            username: socket.username,
+          });
+        }
+
         socket.join(roomId);
         socket.currentRoom = roomId;
 
-        const members = await prisma.roomMember.findMany({
-          where: { roomId },
-          include: {
-            user: { select: { id: true, username: true, avatarColor: true } },
-          },
-        });
-
-        const membersWithStatus = await Promise.all(
-          members.map(async (m) => {
-            const status = await redis.get(`chat:presence:${m.user.id}`);
-            return {
-              ...m.user,
-              online: status === "online",
-            };
-          })
-        );
-
-        socket.emit("room:members", membersWithStatus);
-
-        socket.to(roomId).emit("user:online", {
-          userId: socket.userId,
-          username: socket.username,
-        });
+        // Broadcast updated member list to EVERYONE in the room (including the joiner)
+        await broadcastMembers(io, roomId);
 
       } catch (err) {
         console.error("room:join error:", err);
@@ -79,8 +88,7 @@ export const initSocket = (io) => {
 
     // Send Message
     socket.on("message:send", async ({ roomId, content }) => {
-
-      await new Promise((resolve)=> messageLimiter(socket, resolve))
+      await new Promise((resolve) => messageLimiter(socket, resolve));
       try {
         if (!content || !content.trim()) return;
 
@@ -127,7 +135,7 @@ export const initSocket = (io) => {
       }
     });
 
-    // Typing Indicators
+    // Typing Indicators — include username in both events so frontend can match/remove reliably
     socket.on("typing:start", ({ roomId }) => {
       socket.to(roomId).emit("typing:start", {
         userId: socket.userId,
@@ -138,6 +146,7 @@ export const initSocket = (io) => {
     socket.on("typing:stop", ({ roomId }) => {
       socket.to(roomId).emit("typing:stop", {
         userId: socket.userId,
+        username: socket.username,
       });
     });
 
@@ -150,9 +159,15 @@ export const initSocket = (io) => {
       });
 
       if (socket.currentRoom) {
-        socket.to(socket.currentRoom).emit("user:offline", {
+        // Clear any stuck typing indicator for this user
+        socket.to(socket.currentRoom).emit("typing:stop", {
           userId: socket.userId,
           username: socket.username,
+        });
+
+        // Broadcast updated member list (this user now offline)
+        broadcastMembers(io, socket.currentRoom).catch((err) => {
+          console.error("broadcastMembers on disconnect failed:", err.message);
         });
       }
     });
