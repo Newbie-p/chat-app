@@ -7,7 +7,7 @@
     "dev": "nodemon src/app.js",
     "start": "node src/app.js",
     "postinstall": "prisma generate",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest"
   },
   "keywords": [],
   "author": "",
@@ -25,7 +25,11 @@
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
+    "@babel/preset-env": "^8.0.2",
     "@types/node": "^26.0.0",
+    "babel-jest": "^30.4.1",
+    "cross-env": "^10.1.0",
+    "jest": "^30.4.2",
     "nodemon": "^3.1.14",
     "prisma": "^5.17.0",
     "ts-node": "^10.9.2",

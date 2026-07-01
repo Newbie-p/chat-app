@@ -1,8 +1,9 @@
 import jwt from "jsonwebtoken";
 import prisma from "../config/db.js";
 import redis from "../config/redis.js";
-import { messageLimiter } from "../middleware/rateLimiter.js";
+import { createMessageLimiter } from "../middleware/rateLimiter.js";
 
+const messageLimiter = createMessageLimiter(redis)
 export const initSocket = (io) => {
   // JWT Authentication Middleware
   io.use((socket, next) => {
